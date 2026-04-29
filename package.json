@@ -1,0 +1,45 @@
+{
+  "name": "pi-operation-modes",
+  "version": "0.1.0",
+  "description": "Pi extension that adds Read-Only, Safe-Mode, Accept-Edits, and Unsafe-Auto operation modes.",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "operation-modes",
+    "permissions",
+    "coding-agent"
+  ],
+  "license": "MIT",
+  "author": "Caio D Gallo",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CaioDGallo/pi-operation-modes.git"
+  },
+  "bugs": {
+    "url": "https://github.com/CaioDGallo/pi-operation-modes/issues"
+  },
+  "homepage": "https://github.com/CaioDGallo/pi-operation-modes#readme",
+  "scripts": {
+    "check": "pi --no-extensions -e . --help >/dev/null",
+    "format": "prettier --write README.md extensions/**/*.ts"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/operation-modes.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*"
+  },
+  "peerDependenciesMeta": {
+    "@mariozechner/pi-coding-agent": {
+      "optional": true
+    },
+    "@mariozechner/pi-tui": {
+      "optional": true
+    }
+  }
+}
