@@ -1,15 +1,18 @@
 # Pi Operation Modes
 
-A [pi](https://pi.dev/) package that adds Claude Code-style operation modes to the pi coding agent.
+A [pi](https://pi.dev/) package that adds a simple two-mode guardrail to the pi coding agent.
 
 ## Modes
 
-| Mode             | Color  | Behavior                                                                                                                                                               |
-| ---------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Safe-Mode**    | Yellow | Default. Every tool call requires approval unless session-approved.                                                                                                    |
-| **Read-Only**    | Blue   | Read/search tools and safe read-only bash run automatically. File edits/writes are blocked. Non-whitelisted bash and outside-cwd search/list actions require approval. |
-| **Accept-Edits** | Green  | `read`, `edit`, and `write` run automatically. Search/list inside cwd runs automatically. Bash or outside-cwd actions require approval unless safe/approved.           |
-| **Unsafe-Auto**  | Red    | Everything runs without approval.                                                                                                                                      |
+| Mode           | Color | Behavior |
+| -------------- | ----- | -------- |
+| **Agent-Mode** | Green | Default. pi behaves like regular/default pi: no extra approvals, no tool filtering, and no permission gates from this extension. |
+| **Read-Only**  | Blue  | Read-only inspection inside the current project runs automatically. Anything outside the project or not read-only asks for approval. |
+
+Read-Only auto-allows these read actions when they stay inside the current working directory/project:
+
+- built-in `read`, `find`, `ls`, and `grep`
+- simple `bash` commands using `cat`, `find`, `grep`, `ls`, `rg`, or `ripgrep`
 
 Approvals are in-memory only and reset when pi exits.
 
@@ -27,61 +30,49 @@ pi -e git:github.com/CaioDGallo/pi-operation-modes
 
 ## Usage
 
-Start normally. The default mode is **Safe-Mode**:
+Start normally in **Agent-Mode**:
 
 ```bash
 pi
 ```
 
-Start in a specific mode:
+Start in Read-Only:
 
 ```bash
 pi --operation-mode read-only
-pi --operation-mode safe-mode
-pi --operation-mode accept-edits
-pi --operation-mode unsafe-auto
 ```
 
 Switch modes while pi is running:
 
 ```text
 /mode
+/mode agent-mode
 /mode read-only
-/mode safe-mode
-/mode accept-edits
-/mode unsafe-auto
+/toggle-mode
 ```
 
-Keyboard:
+Aliases accepted by `/mode` and `--operation-mode` include `agent`, `default`, `normal`, `read`, `readonly`, and `ro`.
 
-- `Shift+Tab` cycles operation modes.
-- The extension picks the first free `Ctrl+<key>` candidate for thinking-level cycling and shows it in a startup notification.
-
-## Approval behavior
+## Approval behavior in Read-Only
 
 When approval is required, choose:
 
 - **Allow once**
-- **Allow for session** based on a family-wide normalized signature
+- **Allow for session** based on a broad tool/action signature
 - **Deny**
 
-Examples of session signatures:
+Read-Only asks before:
 
-```text
-read docs/file.md       -> read:*
-grep outside cwd        -> grep:*
-custom_tool {...}       -> custom_tool:*
-aws s3 ls my-bucket     -> bash:aws s3 ls
-git diff --name-only    -> bash:git diff --name-only
-rg "foo" resources/js   -> bash:rg
-```
+- any tool that is not read-only, such as `edit`, `write`, or custom mutating tools
+- any read tool targeting a path outside the current project
+- bash commands outside the read-only allowlist
+- bash commands using shell control, redirection, expansion, or unsafe `find` options such as `-exec` or `-delete`
 
-## Notes
+If pi is running without an interactive UI and approval would be required, the extension blocks the tool call.
 
-- `grep`, `find`, and `ls` are considered safe inside the current working directory.
-- Access outside the current working directory requires approval in guarded modes.
-- In **Read-Only**, `edit` and `write` are removed from active tools and blocked if called.
-- In **Unsafe-Auto**, no confirmation is requested.
+## More detail
+
+See [docs/operation-modes.md](docs/operation-modes.md) for implementation notes and examples.
 
 ## Security
 

@@ -1,7 +1,7 @@
 {
   "name": "pi-operation-modes",
-  "version": "0.1.1",
-  "description": "Pi extension that adds Read-Only, Safe-Mode, Accept-Edits, and Unsafe-Auto operation modes.",
+  "version": "0.2.0",
+  "description": "Pi extension that adds Read-Only and Agent-Mode operation modes.",
   "type": "module",
   "keywords": [
     "pi-package",
@@ -22,8 +22,8 @@
   },
   "homepage": "https://github.com/CaioDGallo/pi-operation-modes#readme",
   "scripts": {
-    "check": "pi --no-extensions -e . --help >/dev/null",
-    "format": "prettier --write README.md extensions/**/*.ts"
+    "check": "pi --no-extensions -e . --help >/dev/null 2>&1",
+    "format": "prettier --write README.md docs/**/*.md extensions/**/*.ts"
   },
   "pi": {
     "extensions": [
@@ -31,14 +31,10 @@
     ]
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*",
-    "@mariozechner/pi-tui": "*"
+    "@mariozechner/pi-coding-agent": "*"
   },
   "peerDependenciesMeta": {
     "@mariozechner/pi-coding-agent": {
-      "optional": true
-    },
-    "@mariozechner/pi-tui": {
       "optional": true
     }
   }

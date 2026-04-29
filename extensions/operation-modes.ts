@@ -3,238 +3,51 @@ import type {
   ExtensionContext,
   ToolCallEvent,
 } from "@mariozechner/pi-coding-agent";
-import { matchesKey } from "@mariozechner/pi-tui";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, relative, resolve } from "node:path";
+import { basename, isAbsolute, relative, resolve } from "node:path";
 
-type OperationMode = "read-only" | "safe-mode" | "accept-edits" | "unsafe-auto";
-type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+type OperationMode = "read-only" | "agent-mode";
 type GateDecision =
   | { action: "allow" }
-  | { action: "confirm"; reason: string; signature: string }
-  | { action: "block"; reason: string };
+  | { action: "confirm"; reason: string; signature: string };
 
-const MODE_ORDER: OperationMode[] = [
-  "safe-mode",
-  "read-only",
-  "accept-edits",
-  "unsafe-auto",
-];
-const THINKING_LEVELS: ThinkingLevel[] = [
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-];
-const READ_ONLY_TOOLS = new Set(["read", "bash", "grep", "find", "ls"]);
-const EDIT_TOOLS = new Set(["read", "edit", "write"]);
-const PATH_SAFE_TOOLS = new Set(["grep", "find", "ls"]);
+const MODE_ORDER: OperationMode[] = ["read-only", "agent-mode"];
 const STATUS_KEY = "operation-mode";
-
-const DEFAULT_OCCUPIED_KEYS = new Set([
-  "up",
-  "down",
-  "left",
-  "right",
-  "ctrl+b",
-  "ctrl+f",
-  "alt+left",
-  "ctrl+left",
-  "alt+b",
-  "alt+right",
-  "ctrl+right",
-  "alt+f",
-  "home",
-  "ctrl+a",
-  "end",
-  "ctrl+e",
-  "ctrl+]",
-  "ctrl+alt+]",
-  "pageup",
-  "pagedown",
-  "backspace",
-  "delete",
-  "ctrl+d",
-  "ctrl+w",
-  "alt+backspace",
-  "alt+d",
-  "alt+delete",
-  "ctrl+u",
-  "ctrl+k",
-  "shift+enter",
-  "enter",
-  "tab",
-  "ctrl+y",
-  "alt+y",
-  "ctrl+-",
-  "ctrl+c",
-  "escape",
-  "ctrl+z",
-  "shift+tab",
-  "ctrl+p",
-  "shift+ctrl+p",
-  "ctrl+l",
-  "ctrl+o",
-  "ctrl+t",
-  "ctrl+n",
-  "ctrl+g",
-  "alt+enter",
-  "alt+up",
-  "ctrl+v",
-  "shift+l",
-  "shift+t",
-  "ctrl+s",
-  "ctrl+r",
-  "ctrl+backspace",
-  "ctrl+x",
-]);
-
-const THINKING_KEY_CANDIDATES = [
-  "ctrl+q",
-  "ctrl+shift+q",
-  "ctrl+shift+r",
-  "ctrl+shift+y",
-  "ctrl+shift+u",
-  "ctrl+shift+i",
-  "ctrl+shift+e",
-  "ctrl+shift+;",
-];
-
-const READ_ONLY_SAFE_PATTERNS = [
-  /^\s*(cat|head|tail|less|more|grep|rg|find|fd|ls|pwd|tree|wc|sort|uniq|diff|file|stat|du|df)\b/i,
-  /^\s*(which|whereis|type|env|printenv|uname|whoami|id|date|cal|uptime|ps|top|htop|free)\b/i,
-  /^\s*git\s+(status|log|diff|show|branch|remote|config\s+--get|ls-)\b/i,
-  /^\s*(npm|pnpm)\s+(list|ls|view|info|search|outdated|audit)\b/i,
-  /^\s*yarn\s+(list|info|why|audit)\b/i,
-  /^\s*composer\s+(show|audit|validate|outdated|licenses)\b/i,
-  /^\s*(node|python|python3|php)\s+--version\b/i,
-  /^\s*(jq|awk)\b/i,
-  /^\s*sed\s+-n\b/i,
-];
-
-const DESTRUCTIVE_PATTERNS = [
-  /\b(rm|rmdir|mv|cp|mkdir|touch|chmod|chown|chgrp|ln|tee|truncate|dd|shred)\b/i,
-  /(^|[^<])>(?!>)/,
-  />>/,
-  /\b(npm|pnpm)\s+(install|uninstall|update|ci|link|publish|add|remove)\b/i,
-  /\byarn\s+(add|remove|install|publish|upgrade)\b/i,
-  /\bcomposer\s+(install|update|require|remove|dump-autoload)\b/i,
-  /\bpip\s+(install|uninstall)\b/i,
-  /\bbrew\s+(install|uninstall|upgrade|update)\b/i,
-  /\bapt(-get)?\s+(install|remove|purge|update|upgrade)\b/i,
-  /\bgit\s+(add|commit|push|pull|merge|rebase|reset|checkout|switch|stash|cherry-pick|revert|tag|init|clone)\b/i,
-  /\b(sudo|su|kill|pkill|killall|reboot|shutdown)\b/i,
-  /\b(systemctl|service)\s+\S*\s*(start|stop|restart|enable|disable)\b/i,
-  /\b(vim?|nano|emacs|code|subl)\b/i,
-];
-
-const ACTION_DEPTHS: Record<string, number> = {
-  aws: 3,
-  az: 3,
-  gcloud: 3,
-  git: 2,
-  docker: 2,
-  kubectl: 2,
-  npm: 2,
-  pnpm: 2,
-  yarn: 2,
-  composer: 2,
-  php: 2,
-  artisan: 2,
-  make: 2,
-  brew: 2,
-};
-
-const SINGLE_ACTION_COMMANDS = new Set([
+const READ_ONLY_TOOL_NAMES = new Set(["read", "find", "ls", "grep"]);
+const READ_ONLY_ACTIVE_TOOLS = ["read", "bash", "find", "ls", "grep"];
+const READ_ONLY_BASH_COMMANDS = new Set([
   "cat",
-  "head",
-  "tail",
-  "less",
-  "more",
-  "grep",
-  "rg",
   "find",
-  "fd",
+  "grep",
   "ls",
-  "pwd",
-  "tree",
-  "wc",
-  "sort",
-  "uniq",
-  "diff",
-  "file",
-  "stat",
-  "du",
-  "df",
-  "sed",
-  "awk",
-  "jq",
+  "rg",
+  "ripgrep",
 ]);
-
-function normalizeKey(key: string): string {
-  return key.toLowerCase().replace(/\s+/g, "");
-}
-
-function getAgentDir(): string {
-  return process.env.PI_CODING_AGENT_DIR ?? resolve(homedir(), ".pi", "agent");
-}
-
-function readUserOccupiedKeys(): Set<string> {
-  const occupied = new Set(DEFAULT_OCCUPIED_KEYS);
-  const configPath = resolve(getAgentDir(), "keybindings.json");
-
-  if (!existsSync(configPath)) return occupied;
-
-  try {
-    const parsed = JSON.parse(readFileSync(configPath, "utf8")) as Record<
-      string,
-      unknown
-    >;
-    for (const value of Object.values(parsed)) {
-      const keys = Array.isArray(value) ? value : [value];
-      for (const key of keys) {
-        if (typeof key === "string") {
-          occupied.add(normalizeKey(key));
-        }
-      }
-    }
-  } catch {
-    return occupied;
-  }
-
-  return occupied;
-}
-
-function pickThinkingKey(): string {
-  const occupied = readUserOccupiedKeys();
-  for (const candidate of THINKING_KEY_CANDIDATES) {
-    if (!occupied.has(normalizeKey(candidate))) {
-      return candidate;
-    }
-  }
-  return "ctrl+q";
-}
+const UNSAFE_FIND_OPTIONS = new Set([
+  "-delete",
+  "-exec",
+  "-execdir",
+  "-ok",
+  "-okdir",
+]);
+const SHELL_CONTROL_PATTERN = /[;&|<>`]|\$\(|\$\{|\$[A-Za-z_][A-Za-z0-9_]*/;
 
 function parseMode(value: string | undefined): OperationMode | undefined {
   const normalized = value?.trim().toLowerCase();
   if (!normalized) return undefined;
 
   const aliases: Record<string, OperationMode> = {
-    readonly: "read-only",
+    agent: "agent-mode",
+    "agent-mode": "agent-mode",
+    default: "agent-mode",
+    normal: "agent-mode",
+    green: "agent-mode",
     read: "read-only",
-    ro: "read-only",
+    readonly: "read-only",
     "read-only": "read-only",
-    safe: "safe-mode",
-    "safe-mode": "safe-mode",
-    accept: "accept-edits",
-    "accept-edits": "accept-edits",
-    edits: "accept-edits",
-    auto: "unsafe-auto",
-    unsafe: "unsafe-auto",
-    "unsafe-auto": "unsafe-auto",
+    ro: "read-only",
+    blue: "read-only",
   };
 
   return aliases[normalized];
@@ -242,15 +55,13 @@ function parseMode(value: string | undefined): OperationMode | undefined {
 
 function nextMode(mode: OperationMode): OperationMode {
   const index = MODE_ORDER.indexOf(mode);
-  return MODE_ORDER[(index + 1) % MODE_ORDER.length] ?? "safe-mode";
+  return MODE_ORDER[(index + 1) % MODE_ORDER.length] ?? "agent-mode";
 }
 
 function modeLabel(mode: OperationMode): string {
   const labels: Record<OperationMode, string> = {
     "read-only": "Read-Only",
-    "safe-mode": "Safe-Mode",
-    "accept-edits": "Accept-Edits",
-    "unsafe-auto": "Unsafe-Auto",
+    "agent-mode": "Agent-Mode",
   };
   return labels[mode];
 }
@@ -259,9 +70,7 @@ function modeStatus(mode: OperationMode): string {
   const label = `● ${modeLabel(mode)}`;
   const colors: Record<OperationMode, string> = {
     "read-only": `\x1b[38;2;59;130;246m${label}\x1b[39m`,
-    "safe-mode": `\x1b[38;2;234;179;8m${label}\x1b[39m`,
-    "accept-edits": `\x1b[38;2;34;197;94m${label}\x1b[39m`,
-    "unsafe-auto": `\x1b[38;2;239;68;68m${label}\x1b[39m`,
+    "agent-mode": `\x1b[38;2;34;197;94m${label}\x1b[39m`,
   };
   return colors[mode];
 }
@@ -275,16 +84,6 @@ function validTools(pi: ExtensionAPI, names: string[]): string[] {
   return names.filter((name) => available.has(name));
 }
 
-function isPathInsideCwd(inputPath: string | undefined, cwd: string): boolean {
-  if (!inputPath || inputPath.trim() === "" || inputPath === ".") return true;
-
-  const absoluteCwd = resolve(cwd);
-  const absolutePath = resolve(absoluteCwd, inputPath);
-  const rel = relative(absoluteCwd, absolutePath);
-
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
 function stringifyInput(input: Record<string, unknown>): string {
   try {
     const text = JSON.stringify(input, null, 2);
@@ -292,6 +91,42 @@ function stringifyInput(input: Record<string, unknown>): string {
   } catch {
     return "(unable to render tool input)";
   }
+}
+
+function stripQuotedText(command: string): string {
+  let output = "";
+  let quote: "'" | '"' | undefined;
+  let escaped = false;
+
+  for (const char of command) {
+    if (escaped) {
+      output += quote ? " " : char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === "\\" && quote !== "'") {
+      escaped = true;
+      output += quote ? " " : char;
+      continue;
+    }
+
+    if ((char === "'" || char === '"') && quote === undefined) {
+      quote = char;
+      output += " ";
+      continue;
+    }
+
+    if (char === quote) {
+      quote = undefined;
+      output += " ";
+      continue;
+    }
+
+    output += quote ? " " : char;
+  }
+
+  return output;
 }
 
 function tokenizeCommand(command: string): string[] {
@@ -337,41 +172,52 @@ function tokenizeCommand(command: string): string[] {
   return tokens;
 }
 
-function isLikelyValueToken(token: string): boolean {
-  return (
-    token.startsWith("/") ||
-    token.startsWith("./") ||
-    token.startsWith("../") ||
-    token.startsWith("~") ||
-    token.includes("=") ||
-    token.includes("://") ||
-    token.length > 32
-  );
+function realpathIfExists(path: string): string {
+  try {
+    return existsSync(path) ? realpathSync.native(path) : path;
+  } catch {
+    return path;
+  }
+}
+
+function normalizeInputPath(inputPath: string, cwd: string): string {
+  const trimmed = inputPath.trim().replace(/^@/, "");
+  if (trimmed === "" || trimmed === ".") return resolve(cwd);
+
+  if (trimmed === "~") return homedir();
+  if (trimmed.startsWith("~/")) return resolve(homedir(), trimmed.slice(2));
+
+  return isAbsolute(trimmed) ? resolve(trimmed) : resolve(cwd, trimmed);
+}
+
+function isPathInsideCwd(inputPath: string | undefined, cwd: string): boolean {
+  if (!inputPath || inputPath.trim() === "" || inputPath.trim() === ".") {
+    return true;
+  }
+
+  const absoluteCwd = realpathIfExists(resolve(cwd));
+  const absolutePath = realpathIfExists(normalizeInputPath(inputPath, cwd));
+  const rel = relative(absoluteCwd, absolutePath);
+
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function pathForTool(event: ToolCallEvent): string | undefined {
+  const input = event.input as Record<string, unknown>;
+  const path = input.path;
+  return typeof path === "string" ? path : undefined;
+}
+
+function commandBase(token: string): string {
+  return basename(token).toLowerCase();
 }
 
 function commandSignature(command: string): string {
-  const firstCommand =
-    command.split(/&&|\|\||;|\n/)[0]?.trim() ?? command.trim();
-  const tokens = tokenizeCommand(firstCommand);
+  const tokens = tokenizeCommand(command.trim());
   if (tokens.length === 0) return "bash:(empty)";
 
-  const executable = tokens[0] ?? "";
-  const base = executable.split("/").pop() ?? executable;
-  const normalizedBase = base.toLowerCase();
-
-  if (SINGLE_ACTION_COMMANDS.has(normalizedBase)) return normalizedBase;
-
-  const depth = ACTION_DEPTHS[normalizedBase];
-  if (depth !== undefined) {
-    const signatureTokens = tokens.slice(0, Math.min(depth, tokens.length));
-    let index = depth;
-    while (index < tokens.length && tokens[index]?.startsWith("-")) {
-      const option = tokens[index];
-      if (option !== undefined) signatureTokens.push(option);
-      index++;
-    }
-    return signatureTokens.join(" ");
-  }
+  const base = commandBase(tokens[0] ?? "");
+  if (READ_ONLY_BASH_COMMANDS.has(base)) return base;
 
   const signatureTokens = [tokens[0]];
   for (
@@ -381,119 +227,139 @@ function commandSignature(command: string): string {
   ) {
     const token = tokens[index];
     if (
-      token === undefined ||
+      !token ||
       token.startsWith("-") ||
-      isLikelyValueToken(token)
-    )
+      token.startsWith("/") ||
+      token.startsWith(".")
+    ) {
       break;
+    }
     signatureTokens.push(token);
   }
 
   return signatureTokens.join(" ");
 }
 
-function isReadOnlySafeCommand(command: string): boolean {
-  const destructive = DESTRUCTIVE_PATTERNS.some((pattern) =>
-    pattern.test(command),
-  );
-  if (destructive) return false;
-  return READ_ONLY_SAFE_PATTERNS.some((pattern) => pattern.test(command));
+function isClearlyOutsidePathToken(token: string): boolean {
+  if (token === ".." || token.startsWith("../")) return true;
+  if (token.startsWith("/")) return true;
+  if (token === "~" || token.startsWith("~/")) return true;
+  return false;
 }
 
-function pathForTool(event: ToolCallEvent): string | undefined {
-  if (
-    event.toolName === "grep" ||
-    event.toolName === "find" ||
-    event.toolName === "ls"
-  ) {
-    return event.input.path;
+function tokenPathFragments(token: string): string[] {
+  if (token.startsWith("--") && token.includes("=")) {
+    const value = token.slice(token.indexOf("=") + 1);
+    return value ? [value] : [];
   }
-  return undefined;
+
+  return [token];
+}
+
+function commandUsesOnlyProjectPaths(tokens: string[], cwd: string): boolean {
+  for (const token of tokens.slice(1)) {
+    if (token === "-" || token.startsWith("-") && !token.includes("=")) {
+      continue;
+    }
+
+    for (const fragment of tokenPathFragments(token)) {
+      if (!isClearlyOutsidePathToken(fragment)) continue;
+      if (!isPathInsideCwd(fragment, cwd)) return false;
+    }
+  }
+
+  return true;
+}
+
+function evaluateReadOnlyBash(
+  command: string,
+  cwd: string,
+): { allow: true } | { allow: false; reason: string } {
+  const trimmed = command.trim();
+  if (!trimmed) {
+    return { allow: false, reason: "empty bash command" };
+  }
+
+  if (SHELL_CONTROL_PATTERN.test(stripQuotedText(trimmed))) {
+    return {
+      allow: false,
+      reason: "bash command uses shell control, redirection, or expansion",
+    };
+  }
+
+  const tokens = tokenizeCommand(trimmed);
+  const base = commandBase(tokens[0] ?? "");
+  if (!READ_ONLY_BASH_COMMANDS.has(base)) {
+    return {
+      allow: false,
+      reason: `${base || "bash"} is not a read-only command`,
+    };
+  }
+
+  if (base === "find") {
+    for (const token of tokens) {
+      if (UNSAFE_FIND_OPTIONS.has(token)) {
+        return { allow: false, reason: `find ${token} is not read-only safe` };
+      }
+    }
+  }
+
+  if (!commandUsesOnlyProjectPaths(tokens, cwd)) {
+    return {
+      allow: false,
+      reason: "bash read command references a path outside the current project",
+    };
+  }
+
+  return { allow: true };
 }
 
 function toolSignature(event: ToolCallEvent): string {
   if (event.toolName === "bash") {
-    return `bash:${commandSignature(event.input.command)}`;
+    const input = event.input as Record<string, unknown>;
+    const command = typeof input.command === "string" ? input.command : "";
+    return `bash:${commandSignature(command)}`;
   }
 
   return `${event.toolName}:*`;
 }
 
-function evaluateGate(
-  mode: OperationMode,
-  event: ToolCallEvent,
-  ctx: ExtensionContext,
-): GateDecision {
-  if (mode === "unsafe-auto") return { action: "allow" };
-
+function evaluateGate(event: ToolCallEvent, ctx: ExtensionContext): GateDecision {
   const signature = toolSignature(event);
 
-  if (mode === "safe-mode") {
+  if (READ_ONLY_TOOL_NAMES.has(event.toolName)) {
+    const path = pathForTool(event);
+    if (isPathInsideCwd(path, ctx.cwd)) return { action: "allow" };
+
     return {
       action: "confirm",
-      reason: "Safe-Mode requires approval for every tool call.",
+      reason: `${event.toolName} targets a path outside the current project.`,
       signature,
     };
   }
 
-  if (mode === "read-only") {
-    if (!READ_ONLY_TOOLS.has(event.toolName)) {
-      return {
-        action: "block",
-        reason: `Read-Only blocks ${event.toolName}; only read/search tools and bash are available.`,
-      };
-    }
+  if (event.toolName === "bash") {
+    const input = event.input as Record<string, unknown>;
+    const command = typeof input.command === "string" ? input.command : "";
+    const decision = evaluateReadOnlyBash(command, ctx.cwd);
+    if (decision.allow) return { action: "allow" };
 
-    if (event.toolName === "bash") {
-      if (isReadOnlySafeCommand(event.input.command))
-        return { action: "allow" };
-      return {
-        action: "confirm",
-        reason:
-          "Read-Only requires approval for non-whitelisted bash commands.",
-        signature,
-      };
-    }
-
-    if (PATH_SAFE_TOOLS.has(event.toolName)) {
-      const inside = isPathInsideCwd(pathForTool(event), ctx.cwd);
-      if (inside) return { action: "allow" };
-      return {
-        action: "confirm",
-        reason: `${event.toolName} targets a path outside the current directory.`,
-        signature,
-      };
-    }
-
-    return { action: "allow" };
-  }
-
-  if (EDIT_TOOLS.has(event.toolName)) return { action: "allow" };
-
-  if (PATH_SAFE_TOOLS.has(event.toolName)) {
-    const inside = isPathInsideCwd(pathForTool(event), ctx.cwd);
-    if (inside) return { action: "allow" };
     return {
       action: "confirm",
-      reason: `${event.toolName} targets a path outside the current directory.`,
+      reason: `Read-Only requires approval: ${decision.reason}.`,
       signature,
     };
   }
-
-  if (event.toolName === "bash" && isReadOnlySafeCommand(event.input.command))
-    return { action: "allow" };
 
   return {
     action: "confirm",
-    reason:
-      "Accept-Edits requires approval for terminal or unknown tool calls.",
+    reason: `${event.toolName} is not a read-only tool.`,
     signature,
   };
 }
 
 async function confirmToolCall(
   ctx: ExtensionContext,
-  mode: OperationMode,
   event: ToolCallEvent,
   reason: string,
   signature: string,
@@ -501,12 +367,12 @@ async function confirmToolCall(
   if (!ctx.hasUI) return "deny";
 
   const title = [
-    `${modeLabel(mode)} approval required`,
+    "Read-Only approval required",
     `Tool: ${event.toolName}`,
     `Reason: ${reason}`,
     `Session approval: ${signature}`,
     "",
-    stringifyInput(event.input),
+    stringifyInput(event.input as Record<string, unknown>),
   ].join("\n");
 
   const choice = await ctx.ui.select(title, [
@@ -519,27 +385,15 @@ async function confirmToolCall(
   return "deny";
 }
 
-function cycleThinking(pi: ExtensionAPI, ctx: ExtensionContext): void {
-  const current = pi.getThinkingLevel() as ThinkingLevel;
-  const currentIndex = THINKING_LEVELS.indexOf(current);
-  const next =
-    THINKING_LEVELS[(currentIndex + 1) % THINKING_LEVELS.length] ?? "off";
-  pi.setThinkingLevel(next);
-  ctx.ui.notify(`Thinking level: ${pi.getThinkingLevel()}`, "info");
-}
-
 export default function operationModesExtension(pi: ExtensionAPI): void {
-  let mode: OperationMode = "safe-mode";
-  let unrestrictedTools: string[] = [];
-  let thinkingKey = pickThinkingKey();
-  let unsubscribeInput: (() => void) | undefined;
+  let mode: OperationMode = "agent-mode";
+  let agentModeTools: string[] | undefined;
   const approvedSignatures = new Set<string>();
 
   pi.registerFlag("operation-mode", {
-    description:
-      "Start operation mode: read-only, safe-mode, accept-edits, unsafe-auto",
+    description: "Start operation mode: agent-mode or read-only",
     type: "string",
-    default: "safe-mode",
+    default: "agent-mode",
   });
 
   function updateStatus(ctx: ExtensionContext): void {
@@ -551,39 +405,43 @@ export default function operationModesExtension(pi: ExtensionAPI): void {
     ctx: ExtensionContext,
     options: { notify?: boolean } = {},
   ): void {
-    if (next === "read-only" && mode !== "read-only") {
-      const active = pi.getActiveTools();
-      unrestrictedTools = active.length > 0 ? active : toolNames(pi);
+    if (next === "read-only") {
+      if (mode !== "read-only") {
+        agentModeTools = pi.getActiveTools();
+      }
+
+      const readOnlyTools = new Set([
+        ...(agentModeTools ?? pi.getActiveTools()),
+        ...READ_ONLY_ACTIVE_TOOLS,
+      ]);
+      pi.setActiveTools(validTools(pi, [...readOnlyTools]));
+    } else if (agentModeTools !== undefined) {
+      pi.setActiveTools(validTools(pi, agentModeTools));
+      agentModeTools = undefined;
     }
 
     mode = next;
-
-    if (mode === "read-only") {
-      pi.setActiveTools(validTools(pi, [...READ_ONLY_TOOLS]));
-    } else {
-      const restoreTools =
-        unrestrictedTools.length > 0 ? unrestrictedTools : toolNames(pi);
-      pi.setActiveTools(validTools(pi, restoreTools));
-    }
-
     updateStatus(ctx);
+
     if (options.notify && ctx.hasUI) {
       ctx.ui.notify(`${modeLabel(mode)} active`, "info");
     }
   }
 
-  function cycleMode(ctx: ExtensionContext): void {
-    setMode(nextMode(mode), ctx, { notify: true });
-  }
-
   pi.registerCommand("mode", {
-    description:
-      "Switch operation mode (read-only, safe-mode, accept-edits, unsafe-auto)",
+    description: "Switch operation mode (agent-mode or read-only)",
     handler: async (args, ctx) => {
       const requested = parseMode(args);
       if (requested) {
         setMode(requested, ctx, { notify: true });
         return;
+      }
+
+      if (args.trim().length > 0) {
+        ctx.ui.notify(
+          `Unknown mode "${args.trim()}". Use agent-mode or read-only.`,
+          "warning",
+        );
       }
 
       const choice = await ctx.ui.select(
@@ -597,58 +455,51 @@ export default function operationModesExtension(pi: ExtensionAPI): void {
     },
   });
 
-  pi.on("session_start", async (_event, ctx) => {
-    unrestrictedTools = pi.getActiveTools();
-    if (unrestrictedTools.length === 0) unrestrictedTools = toolNames(pi);
-
-    thinkingKey = pickThinkingKey();
-    const flagMode = parseMode(
-      String(pi.getFlag("operation-mode") ?? "safe-mode"),
-    );
-    setMode(flagMode ?? "safe-mode", ctx);
-
-    if (unsubscribeInput) unsubscribeInput();
-    if (ctx.hasUI) {
-      unsubscribeInput = ctx.ui.onTerminalInput((data) => {
-        if (matchesKey(data, "shift+tab")) {
-          cycleMode(ctx);
-          return { consume: true };
-        }
-
-        if (matchesKey(data, thinkingKey)) {
-          cycleThinking(pi, ctx);
-          return { consume: true };
-        }
-
-        return undefined;
-      });
-
-      ctx.ui.notify(
-        `Operation modes loaded. Shift+Tab cycles modes. ${thinkingKey} cycles thinking.`,
-        "info",
-      );
-    }
+  pi.registerCommand("toggle-mode", {
+    description: "Toggle between Read-Only and Agent-Mode",
+    handler: async (_args, ctx) => {
+      setMode(nextMode(mode), ctx, { notify: true });
+    },
   });
 
-  pi.on("session_shutdown", async () => {
-    if (unsubscribeInput) {
-      unsubscribeInput();
-      unsubscribeInput = undefined;
+  pi.on("session_start", async (_event, ctx) => {
+    const rawFlag = String(pi.getFlag("operation-mode") ?? "agent-mode");
+    const flagMode = parseMode(rawFlag);
+
+    if (!flagMode && rawFlag.trim().length > 0) {
+      setMode("read-only", ctx);
+      if (ctx.hasUI) {
+        ctx.ui.notify(
+          `Unknown operation mode "${rawFlag}". Falling back to Read-Only.`,
+          "warning",
+        );
+      }
+      return;
     }
+
+    setMode(flagMode ?? "agent-mode", ctx);
+  });
+
+  pi.on("before_agent_start", async (event) => {
+    if (mode !== "read-only") return undefined;
+
+    return {
+      systemPrompt:
+        event.systemPrompt +
+        "\n\nOperation mode: Read-Only. Prefer read-only inspection only. Read tools and simple cat/find/grep/rg/ls commands inside the current project may run automatically. Any mutation, non-read-only tool, shell expansion/control, or access outside the current project requires explicit user approval before execution.",
+    };
   });
 
   pi.on("tool_call", async (event, ctx) => {
-    const decision = evaluateGate(mode, event, ctx);
+    if (mode === "agent-mode") return undefined;
 
+    const decision = evaluateGate(event, ctx);
     if (decision.action === "allow") return undefined;
-    if (decision.action === "block")
-      return { block: true, reason: decision.reason };
 
     if (approvedSignatures.has(decision.signature)) return undefined;
 
     const approval = await confirmToolCall(
       ctx,
-      mode,
       event,
       decision.reason,
       decision.signature,
@@ -661,7 +512,7 @@ export default function operationModesExtension(pi: ExtensionAPI): void {
 
     return {
       block: true,
-      reason: `Blocked by ${modeLabel(mode)}: ${decision.reason}`,
+      reason: `Blocked by Read-Only: ${decision.reason}`,
     };
   });
 }
