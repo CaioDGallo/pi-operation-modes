@@ -411,32 +411,12 @@ function pathForTool(event: ToolCallEvent): string | undefined {
   return undefined;
 }
 
-function toolSignature(event: ToolCallEvent, ctx: ExtensionContext): string {
+function toolSignature(event: ToolCallEvent): string {
   if (event.toolName === "bash") {
     return `bash:${commandSignature(event.input.command)}`;
   }
 
-  if (
-    event.toolName === "grep" ||
-    event.toolName === "find" ||
-    event.toolName === "ls"
-  ) {
-    const inputPath = event.input.path ?? ".";
-    const scope = isPathInsideCwd(inputPath, ctx.cwd)
-      ? "cwd"
-      : resolve(ctx.cwd, inputPath);
-    return `${event.toolName}:${scope}`;
-  }
-
-  if (
-    event.toolName === "read" ||
-    event.toolName === "edit" ||
-    event.toolName === "write"
-  ) {
-    return `${event.toolName}:${resolve(ctx.cwd, event.input.path)}`;
-  }
-
-  return `${event.toolName}:${JSON.stringify(event.input)}`;
+  return `${event.toolName}:*`;
 }
 
 function evaluateGate(
@@ -446,7 +426,7 @@ function evaluateGate(
 ): GateDecision {
   if (mode === "unsafe-auto") return { action: "allow" };
 
-  const signature = toolSignature(event, ctx);
+  const signature = toolSignature(event);
 
   if (mode === "safe-mode") {
     return {
@@ -524,7 +504,7 @@ async function confirmToolCall(
     `${modeLabel(mode)} approval required`,
     `Tool: ${event.toolName}`,
     `Reason: ${reason}`,
-    `Session signature: ${signature}`,
+    `Session approval: ${signature}`,
     "",
     stringifyInput(event.input),
   ].join("\n");

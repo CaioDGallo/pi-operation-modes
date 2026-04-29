@@ -62,12 +62,15 @@ Keyboard:
 When approval is required, choose:
 
 - **Allow once**
-- **Allow for session** based on a normalized signature
+- **Allow for session** based on a family-wide normalized signature
 - **Deny**
 
-Examples of bash session signatures:
+Examples of session signatures:
 
 ```text
+read docs/file.md       -> read:*
+grep outside cwd        -> grep:*
+custom_tool {...}       -> custom_tool:*
 aws s3 ls my-bucket     -> bash:aws s3 ls
 git diff --name-only    -> bash:git diff --name-only
 rg "foo" resources/js   -> bash:rg

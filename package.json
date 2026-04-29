@@ -1,6 +1,6 @@
 {
   "name": "pi-operation-modes",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pi extension that adds Read-Only, Safe-Mode, Accept-Edits, and Unsafe-Auto operation modes.",
   "type": "module",
   "keywords": [
