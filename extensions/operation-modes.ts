@@ -9,11 +9,21 @@ import { homedir } from "node:os";
 import { basename, isAbsolute, relative, resolve } from "node:path";
 
 type OperationMode = "read-only" | "agent-mode";
+type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 type GateDecision =
   | { action: "allow" }
   | { action: "confirm"; reason: string; signature: string };
 
 const MODE_ORDER: OperationMode[] = ["read-only", "agent-mode"];
+const THINKING_LEVELS: ThinkingLevel[] = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+];
+const THINKING_KEY = "ctrl+q";
 const STATUS_KEY = "operation-mode";
 const READ_ONLY_TOOL_NAMES = new Set(["read", "find", "ls", "grep"]);
 const READ_ONLY_ACTIVE_TOOLS = ["read", "bash", "find", "ls", "grep"];
@@ -386,6 +396,15 @@ async function confirmToolCall(
   return "deny";
 }
 
+function cycleThinking(pi: ExtensionAPI, ctx: ExtensionContext): void {
+  const current = pi.getThinkingLevel() as ThinkingLevel;
+  const currentIndex = THINKING_LEVELS.indexOf(current);
+  const next =
+    THINKING_LEVELS[(currentIndex + 1) % THINKING_LEVELS.length] ?? "off";
+  pi.setThinkingLevel(next);
+  ctx.ui.notify(`Thinking level: ${pi.getThinkingLevel()}`, "info");
+}
+
 export default function operationModesExtension(pi: ExtensionAPI): void {
   let mode: OperationMode = "agent-mode";
   let agentModeTools: string[] | undefined;
@@ -490,11 +509,16 @@ export default function operationModesExtension(pi: ExtensionAPI): void {
           return { consume: true };
         }
 
+        if (matchesKey(data, THINKING_KEY)) {
+          cycleThinking(pi, ctx);
+          return { consume: true };
+        }
+
         return undefined;
       });
 
       ctx.ui.notify(
-        "Operation modes loaded. Shift+Tab toggles Read-Only/Agent-Mode.",
+        "Operation modes loaded. Shift+Tab toggles modes. Ctrl+Q cycles thinking.",
         "info",
       );
     }

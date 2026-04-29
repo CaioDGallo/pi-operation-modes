@@ -54,6 +54,7 @@ Switch modes while pi is running:
 Keyboard:
 
 - `Shift+Tab` toggles between Read-Only and Agent-Mode.
+- `Ctrl+Q` cycles the thinking level.
 
 Aliases accepted by `/mode` and `--operation-mode` include `agent`, `default`, `normal`, `read`, `readonly`, and `ro`.
 

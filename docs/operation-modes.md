@@ -52,6 +52,7 @@ Session approvals use broad signatures on purpose:
 /mode read-only    Switch to Read-Only
 /toggle-mode       Toggle between Agent-Mode and Read-Only
 Shift+Tab          Toggle between Agent-Mode and Read-Only
+Ctrl+Q             Cycle the thinking level
 ```
 
 ```bash
