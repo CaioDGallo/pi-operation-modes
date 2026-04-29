@@ -3,6 +3,7 @@ import type {
   ExtensionContext,
   ToolCallEvent,
 } from "@mariozechner/pi-coding-agent";
+import { matchesKey } from "@mariozechner/pi-tui";
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, relative, resolve } from "node:path";
@@ -388,6 +389,7 @@ async function confirmToolCall(
 export default function operationModesExtension(pi: ExtensionAPI): void {
   let mode: OperationMode = "agent-mode";
   let agentModeTools: string[] | undefined;
+  let unsubscribeInput: (() => void) | undefined;
   const approvedSignatures = new Set<string>();
 
   pi.registerFlag("operation-mode", {
@@ -474,10 +476,35 @@ export default function operationModesExtension(pi: ExtensionAPI): void {
           "warning",
         );
       }
-      return;
+    } else {
+      setMode(flagMode ?? "agent-mode", ctx);
     }
 
-    setMode(flagMode ?? "agent-mode", ctx);
+    if (unsubscribeInput) unsubscribeInput();
+    unsubscribeInput = undefined;
+
+    if (ctx.hasUI) {
+      unsubscribeInput = ctx.ui.onTerminalInput((data) => {
+        if (matchesKey(data, "shift+tab")) {
+          setMode(nextMode(mode), ctx, { notify: true });
+          return { consume: true };
+        }
+
+        return undefined;
+      });
+
+      ctx.ui.notify(
+        "Operation modes loaded. Shift+Tab toggles Read-Only/Agent-Mode.",
+        "info",
+      );
+    }
+  });
+
+  pi.on("session_shutdown", async () => {
+    if (unsubscribeInput) {
+      unsubscribeInput();
+      unsubscribeInput = undefined;
+    }
   });
 
   pi.on("before_agent_start", async (event) => {

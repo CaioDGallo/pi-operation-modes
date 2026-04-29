@@ -51,6 +51,7 @@ Session approvals use broad signatures on purpose:
 /mode agent-mode   Switch to normal/default pi behavior
 /mode read-only    Switch to Read-Only
 /toggle-mode       Toggle between Agent-Mode and Read-Only
+Shift+Tab          Toggle between Agent-Mode and Read-Only
 ```
 
 ```bash
